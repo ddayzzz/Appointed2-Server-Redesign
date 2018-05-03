@@ -1,0 +1,28 @@
+{% extends '__base__.html' %}
+{% block title %}Appointed2 错误{% endblock %}
+{% block size %}width="auto" height="500px"{% endblock %}
+{% block content %}
+<div class="uk-container uk-container-center">
+    <h2><b>错误代码：</b>{{ data.status }}</h2>
+    {% if data.messages is sequence %}
+    <h4><b>错误消息：</b></h4>
+    <p>
+    {% for item in data.messages %}
+        {{ item }}<br />
+    {% endfor %}
+    </p>
+    {% endif %}
+    {% if data.traceback != "" %}
+    <h4><b>调用堆栈信息：</b></h4>
+    <pre>{{ data.traceback }}</pre>
+    {% endif %}
+</div>
+{% if data.template is not none %}
+<div class="uk-container uk-container-center">
+    <!--content-->
+    {% block extend_template %}
+    {% endblock %}
+    <!--end content-->
+</div>
+{% endif %}
+{% endblock %}

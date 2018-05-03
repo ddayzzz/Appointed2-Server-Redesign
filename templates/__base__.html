@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <script type="text/javascript" src="/static/js/jquery-3.2.1.min.js"></script>
+    <!--导入uikit的基本的样式-->
+    <link type="text/css" rel="stylesheet" href="/static/css/uikit.css"/>
+    <script type="text/javascript" src="/static/js/sha1.min.js"></script>
+    <script type="text/javascript" src="/static/js/basic.js"></script>
+    <script type="text/javascript" src="/static/js/uikit.js"></script>
+    {% block meta %}<!-- block meta -->{% endblock %}
+    <title>{% block title %}?{% endblock %}</title>
+    <!--导入favico图标-->
+    <link rel="shortcut icon" href="/static/favicon.ico" type="image/x-icon" />
+    {% block info %}<!--设置页面的信息--> {% endblock %}
+    {% block beforehead %}<!-- before head -->{% endblock %}
+</head>
+<body {% block size %} width="auto" height="500px" {% endblock %}>
+    <!--其他的内容-->
+    <!--content-->
+    {% block content %}
+    {% endblock %}
+    <!--end content-->
+
+</body>
+</html>

@@ -1,0 +1,19 @@
+{
+    "host": "127.0.0.1",
+    "port": 9000,
+    "interactive": true,
+    "restart_signnum_win": "0x0401",
+    "close_signnum_win": "0x0400",
+    "restart_signnum_unix": "SIGUSR2",
+    "close_signnum_unix": "SIGUSR1",
+    "installed": {
+        "main": {
+            "name": "main",
+            "version": "0.0.0.1",
+            "platform": "all",
+            "author": "Shu Wang <wangshu214@live.cn>",
+            "enable": true,
+            "system": true
+        }
+    }
+}
