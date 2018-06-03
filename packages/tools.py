@@ -13,6 +13,9 @@ import chardet
 import traceback
 
 
+_logger = logger.get_logger('Server')
+
+
 def EnvironmentPath(path_type='root', packageType=False):
     """返回服务管理器的路径信息(相对路径)
     path_type : 路径的标志
@@ -32,7 +35,7 @@ def EnvironmentPath(path_type='root', packageType=False):
 
 def ObjToBool(obj, true=('1', 'TRUE')):
     """将任何一个对象的转换为bool。对象最好是拥有__str__方法
-    true:可以指定真值。忽略大小写(默认真正大写)
+    :param true:可以指定真值。忽略大小写(默认真正大写)
     """
     try:
         if not obj:
@@ -67,35 +70,6 @@ def ObjToBool(obj, true=('1', 'TRUE')):
 #         res = str(e.args)
 #         logger.get_logger().info('使用Make编译出错:\n' + res)
 #     return res
-
-
-def InstallRequiredModules(modulesNames, appointed2RequiredNames, throws=False):
-    """
-    安装Python或者是Appointed需求的模块
-    :param modulesNames: Python模块的名称以及版本检查信息 例如 ss==2.0 PIL>=2.0。如果不指定版本将安装最新版
-    :param throws: 是否抛出错误
-    :param appointed2RequiredNames: Appointed2模块
-    :return:
-    """
-    try:
-        if len(modulesNames) > 0:
-            # 设置python的安装信息
-            res = subprocess.check_output('pip3 install %s' % modulesNames,
-                                          shell=False,
-                                          cwd=macros.Macro('PYTHON_BIN', throws))
-            logger.get_logger().info('pip3安装信息:\n' + res.decode('utf-8'))
-        # Appointed2安装
-    except subprocess.CalledProcessError as e:
-        if throws:
-            raise e
-        res = e.stderr.decode('utf-8') if e.stderr else ''
-        logger.get_logger().info('安装需求模块出错:\n' + res)
-    except Exception as e:
-        if throws:
-            raise e
-        res = str(e.args)
-        logger.get_logger().info('安装需求模块出错:\n' + res)
-    return res
 
 
 def IsAdminRequest(request):
@@ -182,6 +156,7 @@ def compileDynamicExtension(compilerType, cwd, srcs, out):
         reterr = err.decode(err_dect['encoding']) if len(err) > 0 else ''
         return p.returncode, target, retout, reterr
     except Exception as e:
+        _logger.error('运行模块安装程序出现异常。', exc_info=True)
         return -1, '', '', '编译失败出现异常：\n%s\n' % traceback.format_exc()
 
 def installDependentModules(modules, cwd):
@@ -209,6 +184,7 @@ def installDependentModules(modules, cwd):
     args = [pippath, 'install']
     args.extend(modules)
     # 运行程序
+    ret = None
     try:
         p = subprocess.Popen(args=' '.join(args), stderr=subprocess.PIPE, stdout=subprocess.PIPE, shell=True, cwd=cwd)
         out, err = p.communicate()
@@ -216,9 +192,11 @@ def installDependentModules(modules, cwd):
         err_dect = chardet.detect(err)
         retout = out.decode(out_dect['encoding']) if len(out) > 0 else ''
         reterr = err.decode(err_dect['encoding']) if len(err) > 0 else ''
-        return p.returncode, retout, reterr
+        ret = (p.returncode, retout, reterr)
     except Exception as e:
-        return -1, '', '运行模块安装程序出现异常：\n%s\n' % traceback.format_exc()
+        ret = (-1, '', '运行模块安装程序出现异常：\n%s\n' % traceback.format_exc())
+        _logger.error('运行模块安装程序出现异常。', exc_info=True)
+    return ret
 
 
 

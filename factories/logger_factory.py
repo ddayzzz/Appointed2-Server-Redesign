@@ -1,5 +1,5 @@
 from packages import logger
-__logger = logger.get_logger()
+__logger = logger.get_logger("Server")
 async def logger_factory(app, handler):
     """
     一个自定义的工厂拦截器，用于显示调用信息

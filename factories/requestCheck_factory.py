@@ -1,6 +1,6 @@
 import aiohttp
 from packages import logger, APIError
-__logger = logger.get_logger()
+__logger = logger.get_logger("Server")
 
 async def requestCheck_factory(app, handler):
     """

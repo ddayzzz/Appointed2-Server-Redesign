@@ -5,9 +5,12 @@ __version__ = '0.0.0.1'
 __all__ = [
     'ProcessHTTPNotFound', 'ProcessAPIError', 'ProcessAPIErrorWithObject', 'APIError'
 ]
+from packages import logger
 from aiohttp import web_exceptions as basicExceptions
 import json
 
+
+__logger = logger.get_logger("Server")
 
 def ProcessHTTPNotFound(app, messages=tuple(), traceback=str(), template=None, format='normal', **kwargs):
     """
@@ -34,8 +37,7 @@ def ProcessHTTPNotFound(app, messages=tuple(), traceback=str(), template=None, f
             response.content_type = 'application/json;charset=utf-8'
         return response
     except Exception as e:
-        import logger
-        logger.get_logger().error('处理HTTPNotFound出现错误:%s' % str(e.args))
+        __logger.error('处理HTTPNotFound出现错误:%s' % str(e.args))
         raise e
 
 
@@ -65,8 +67,7 @@ def ProcessAPIError(app, messages=tuple(), traceback=str(), template=None, forma
             response.content_type = 'application/json;charset=utf-8'
         return response
     except Exception as e:
-        from packages import logger
-        logger.get_logger().error('处理APIError的过程中又出现错误:%s' % str(e.args))
+        __logger.error('处理APIError的过程中又出现错误:%s' % str(e.args))
         raise e
 
 

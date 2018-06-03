@@ -1,5 +1,8 @@
 from packages import logger
-__logger = logger.get_logger()
+
+__logger = logger.get_logger("Server")
+
+
 async def data_factory(app, handler):
     """
     对请求来源进行分类

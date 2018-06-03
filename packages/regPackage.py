@@ -8,7 +8,7 @@ __doc__ = 'Appointed2定义的路由包装器，包装get和post方法'
 
 # 这个是用来附加模块
 # GET获取数据
-def get(path):
+def get(path, adminLevel=False, **kwargs):
     """
     get是一个装饰器
     """
@@ -18,12 +18,14 @@ def get(path):
             return func(*args, **kw)
         wrapper.__method__ = 'GET'
         wrapper.__route__ = path
+        # 是否有管理员的要求
+        wrapper.__adminLevel__ = adminLevel
         return wrapper
     return decorator
 
 
 # POST包装器
-def post(path):
+def post(path, adminLevel=False, **kwargs):
     """
     post是一个装饰器
     """
@@ -33,5 +35,7 @@ def post(path):
             return func(*args, **kw)
         wrapper.__method__ = 'POST'
         wrapper.__route__ = path
+        # 是否有管理员的要求
+        wrapper.__adminLevel__ = adminLevel
         return wrapper
     return decorator

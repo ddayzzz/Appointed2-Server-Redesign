@@ -6,9 +6,9 @@ __all__ = []
 __doc__ = '用于安装Appointed2以及支持的模块并提供安装、卸载、安装子模块等接口，以及定义一些在安装过程中起作用的工具函数'
 import json
 import os
-import zipfile
 import tarfile
-from packages import macros, Package, logger, tools
+from packages import macros, logger, tools
+from collections import Iterable
 import config
 import shutil
 import traceback
@@ -22,18 +22,6 @@ class PackageStatus(Enum):
     NotExists=4
     Invalid=5
 
-class BaseSetupRequest():
-
-    def __init__(self):
-        self.logs = list()
-
-
-class InstallRequest(BaseSetupRequest):
-
-    def __init__(self, packagesFile):
-        super(InstallRequest, self).__init__()
-        self.packageFile = packagesFile
-        self.installStatus = False  # 是否完成安装
 
 class BaseHandler():
 
@@ -56,6 +44,58 @@ class BaseHandler():
 
     def handle(self, request):
         raise NotImplementedError('子类必须实现 handle')
+
+
+class BaseSetupRequest():
+    _logFcnMap = {'info': BaseHandler.logger.info,
+                  'debug': BaseHandler.logger.debug,
+                  'warn': BaseHandler.logger.warn,
+                  'error': lambda msg:BaseHandler.logger.error(msg, exc_info=True, stack_info=True),
+                  'nerror': BaseHandler.logger.error}
+
+    def __init__(self, immediatelyDisplayLogs=False):
+        """
+        基本的安装请求
+        :param immediatelyDisplayLogs: 是否立即显示日志信息
+        """
+        self._logs = list()
+        self._immLogs = immediatelyDisplayLogs
+
+    def put(self, msg, msgType="info"):
+        """
+        将日志输出已经保存
+        :param msg:消息
+        :param msgType: 输出的日志的类型 debug，info，warn，error, nerror(不显示堆栈、错误等信息）
+        :return:
+        """
+        if isinstance(msg, str):
+            if self._immLogs:
+                BaseSetupRequest._logFcnMap.get(msgType, BaseHandler.logger.info)(msg)
+            self._logs.append(msg)
+        elif isinstance(msg,Iterable):
+            # 可迭代的对象
+            if self._immLogs:
+                for _, ms in enumerate(msg):
+                    BaseSetupRequest._logFcnMap.get(msgType, BaseHandler.logger.info)(ms)
+                self._logs.extend(msg)
+
+    def extend(self, request):
+        if not isinstance(request, BaseSetupRequest):
+            raise ValueError("只支持对 BaseSetupRequest 的子类进行日志扩充")
+        self._logs.extend(request._logs)
+
+
+
+
+
+class InstallRequest(BaseSetupRequest):
+
+    def __init__(self, packagesFile, immDisplayLogs=False):
+        super(InstallRequest, self).__init__(immediatelyDisplayLogs=immDisplayLogs)
+        self.packageFile = packagesFile
+        self.installStatus = False  # 是否完成安装
+
+
 
 class PackageFileHandler(BaseHandler):
     """
@@ -105,10 +145,10 @@ class PackageFileHandler(BaseHandler):
             request.installDirs = d
             request.installFiles = f
         except Exception as e:
-            request.logs.append('解压缩安装包失败：\n%s\n' % traceback.format_exc())
+            request.put('解压缩安装包失败：%s' % zf, msgType='nerror')
         else:
             request.extractRoot = BaseHandler.cached_setup_dir  # 这个设置的是解压的路径的根目录
-            request.logs.append('解压安装包：成功')
+            request.put('成功解压安装包：%s' % zf)
             if super().getSuccessor():
                 super().getSuccessor().handle(request)
 
@@ -177,7 +217,7 @@ class CheckPackageInfoHandler(BaseHandler):
         try:
             packjson = macros.sep.join((request.extractRoot, 'package.json'))
             if not os.path.exists(packjson):
-                request.logs.append('检查信息失败：没有找到配置文件‘%s’' % packjson)
+                request.put('检查信息失败：没有找到配置文件‘%s’' % packjson, msgType='nerror')
                 request.packageStatus = PackageStatus.Invalid
                 return
             packjsonObj = CheckPackageInfoHandler._GetPackageInfo(packjson)
@@ -185,14 +225,14 @@ class CheckPackageInfoHandler(BaseHandler):
             initFile = macros.sep.join(
                 (request.extractRoot, macros.Macro('PACKAGEROOT'), packjsonObj['name'], '__init__.py'))
             if not os.path.exists(initFile):
-                request.logs.append('检查信息失败：没有找到模块的初始化文件‘%s’' % initFile)
+                request.put('检查信息失败：没有找到模块的初始化文件‘%s’' % initFile, msgType='nerror')
                 request.packageStatus = PackageStatus.Invalid
                 return
             status, msg = CheckPackageInfoHandler._CheckInstalledInfo(packjsonObj)
         except Exception as e:
-            request.logs.append('检查信息失败：\n%s\n' % traceback.format_exc())
+            request.put('检查信息失败', msgType='nerror')
         else:
-            request.logs.append(msg)
+            request.put(msg)
             request.packageStatus = status
             request.infoFile = packjson
             request.infoObject = packjsonObj
@@ -276,14 +316,14 @@ class ProcessInstallHandler(BaseHandler):
         return output
 
     @staticmethod
-    def _compileFiles(infoObj, cwd, logs):
+    def _compileFiles(request):
         """
         编译相关的源文件
-        :param infoObj: 信息对象
-        :param cwd:工作目录
-        :param logs:这个是请求对象
+        :param request: 请求对象
         :return: 返回 状态(1没有编译，0 所有编译成功，-1 编译有错误)，新增文件列表
         """
+        infoObj = request.infoObject
+        cwd = request.extractRoot
         compile_obj = infoObj.get('compile', None)
         status = 1
         files = []
@@ -300,11 +340,11 @@ class ProcessInstallHandler(BaseHandler):
                                                                     cwd=cwd)
                 # 判断条件
                 if status != 0:
-                    logs.append("编译对象‘%s’失败，返回值：%d。\n输出的信息：\n%s\n错误/警告输出：\n%s\n" % (compile_name,
+                    request.put("编译对象‘%s’失败，返回值：%d。\n输出的信息：\n%s\n错误/警告输出：\n%s\n" % (compile_name,
                                                                                 status, output, err))
                     return -1, files
                 else:
-                    logs.append("编译对象‘%s’成功，返回值：%d。\n输出的信息：\n%s\n错误/警告输出：\n%s\n" % (compile_name,
+                    request.put("编译对象‘%s’成功，返回值：%d。\n输出的信息：\n%s\n错误/警告输出：\n%s\n" % (compile_name,
                                                                                        status, output, err))
                     # 更新文件列表
                     files.append(outfile)
@@ -313,14 +353,15 @@ class ProcessInstallHandler(BaseHandler):
         return status, files
 
     @staticmethod
-    def _installDependcies(infoObj, cwd, logs):
+    def _installDependcies(request):
         """
         编译相关的源文件
-        :param infoObj: 信息对象
-        :param cwd:工作目录
-        :param logs:这个是请求对象
+        
+        :param request: 请求对象
         :return: 返回 状态(1没有安装，0 所有安装成功，-1 安装有错误)，安装的模块列表
         """
+        infoObj = request.infoObject
+        cwd = request.extractRoot
         dep_obj = infoObj.get('dependencies', None)
         status = 1
         mods = []
@@ -328,14 +369,14 @@ class ProcessInstallHandler(BaseHandler):
             return 1, mods
         # 查询所有的模块
         for modulename in dep_obj:
-            logs.append('正在安装 Python 模块：%s' % modulename)
+            request.put('正在安装 Python 模块：%s' % modulename)
             status, output, err = tools.installDependentModules((modulename, ), cwd=cwd)
             if status != 0:
-                logs.append("安装 Python 模块 ‘%s’ 失败，返回值：%d。\n输出的信息：\n%s\n错误/警告输出：\n%s\n" % (modulename,
+                request.put("安装 Python 模块 ‘%s’ 失败，返回值：%d。\n输出的信息：\n%s\n错误/警告输出：\n%s\n" % (modulename,
                                                                                           status, output, err))
                 return -1, mods
             else:
-                logs.append("成功安装 Python 模块 ‘%s’，返回值：%d。\n输出的信息：\n%s\n错误/警告输出：\n%s\n" % (modulename,
+                request.put("成功安装 Python 模块 ‘%s’，返回值：%d。\n输出的信息：\n%s\n错误/警告输出：\n%s\n" % (modulename,
                                                                                           status, output, err))
                 mods.append(modulename)
                 status = 0
@@ -351,7 +392,7 @@ class ProcessInstallHandler(BaseHandler):
         """
         cfgmgr = BaseHandler.configMgr
         infoObj['enable'] = True
-        infoObj['system'] = False
+        infoObj['main_package'] = False
         infoObj['configFile'] = macros.sep.join((macros.Macro('CONFIGROOT'), '%s-%s.json' % (infoObj['name'], infoObj['version'])))
         cfgmgr.addInstalledPackageInfo(infoObj['name'], infoObj)
         cfgmgr.save()
@@ -365,55 +406,55 @@ class ProcessInstallHandler(BaseHandler):
         """
         try:
             if request.packageStatus == PackageStatus.Invalid:
-                request.logs.append('安装失败：非法的安装包')
+                request.put('安装失败：非法的安装包', msgType='nerror')
                 return
             if request.packageStatus == PackageStatus.CurrentVersion:
-                request.logs.append('安装失败：试图安装相同版本的模块‘%s’，版本：%s' % (request.infoObject['name'],
-                                                                           request.infoObject['version']))
+                request.put('安装失败：试图安装相同版本的模块‘%s’，版本：%s' % (request.infoObject['name'],
+                                                                           request.infoObject['version']), msgType='nerror')
                 return
             if request.packageStatus == PackageStatus.OlderVersion:
-                request.logs.append('安装失败：试图安装旧版本的模块‘%s’。冲突的版本：%s' % (request.infoObject['name'],
-                                                                             request.infoObject['version']))
+                request.put('安装失败：试图安装旧版本的模块‘%s’。冲突的版本：%s' % (request.infoObject['name'],
+                                                                             request.infoObject['version']), msgType='nerror')
                 return
             if request.packageStatus == PackageStatus.NewerVersion:
-                request.logs.append('安装程序将会安装新版的模块‘%s’，新版本：‘%s’' % (request.infoObject['name'],
-                                                                           request.infoObject['version']))
+                request.put('安装程序将会安装新版的模块‘%s’，新版本：‘%s’' % (request.infoObject['name'],
+                                                                           request.infoObject['version']), msgType='nerror')
                 # 需要卸载
-                request.logs.append('正在卸载旧版本的模块')
+                request.put('正在卸载旧版本的模块')
                 p1 = UninstallGetInfoHandler()
                 p2 = UninstallDeleteFilesAndDirs()
-                req = UninstallRequest(request.infoObject['name'])
+                req = UninstallRequest(request.infoObject['name'], immDisplayLogs=False)
                 p1.setSuccessor(p2)
                 p1.handle(req)  # 处理卸载请求
-                request.logs.extend(req.logs)
-                request.logs.append('卸载旧版本的模块成功')
+                request.extend(req)
+                request.put('卸载旧版本的模块成功')
             # 安装相关的模块
-            ms, mmnames = ProcessInstallHandler._installDependcies(request.infoObject, request.extractRoot, request.logs)
+            ms, mmnames = ProcessInstallHandler._installDependcies(request)
             if ms == -1:
-                request.logs.append("安装一个或多个 Python 模块失败。")
+                request.put("安装一个或多个 Python 模块失败。", msgType='nerror')
                 return
             elif ms == 0:
-                request.logs.append("成功安装一个或多个 Python 模块。")
+                request.put("成功安装一个或多个 Python 模块。")
             # 编译相关的文件
-            cs, cfiles = ProcessInstallHandler._compileFiles(request.infoObject, request.extractRoot, request.logs)
+            cs, cfiles = ProcessInstallHandler._compileFiles(request)
             if cs == -1:
-                request.logs.append("编译一个或多个动态链接库失败。")
+                request.put("编译一个或多个动态链接库失败。", msgType='nerror')
                 return
             elif cs == 0:
-                request.logs.append("成功编译一个或多个动态链接库。")
+                request.put("成功编译一个或多个动态链接库。")
                 # 写入文件对象
                 request.installFiles.extend(cfiles)
             # 不存在其他的内容
-            request.logs.extend(ProcessInstallHandler._processInfoFile(request.installFiles, request.installDirs,
+            request.put(ProcessInstallHandler._processInfoFile(request.installFiles, request.installDirs,
                                                                               request.infoFile, request.infoObject))
-            request.logs.extend(ProcessInstallHandler._copyFilesAndDirs(request.extractRoot, '.'))
-            request.logs.extend(ProcessInstallHandler._updateConfig(request.infoObject))
+            request.put(ProcessInstallHandler._copyFilesAndDirs(request.extractRoot, '.'))
+            request.put(ProcessInstallHandler._updateConfig(request.infoObject))
 
         except Exception as e:
-            request.logs.append('处理安装失败：\n%s\n' % traceback.format_exc())
+            request.put('处理安装失败：\n%s\n' % traceback.format_exc())
         else:
             request.installStatus = True  # 完成安装
-            request.logs.append(
+            request.put(
                 "成功安装模块：‘{name}’，版本：‘{version}’，作者：‘{author}’，目标平台：‘{platform}’。重新启动服务即可生效。".format(
                     name=request.infoObject['name'],
                     version=request.infoObject['version'],
@@ -431,8 +472,8 @@ class ProcessInstallHandler(BaseHandler):
 # 卸载部分
 class UninstallRequest(BaseSetupRequest):
 
-    def __init__(self, packageName):
-        super(UninstallRequest, self).__init__()
+    def __init__(self, packageName, immDisplayLogs):
+        super(UninstallRequest, self).__init__(immediatelyDisplayLogs=immDisplayLogs)
         self.packageName = packageName
         self.uninstallStatus = False  # 是否成功卸载
 
@@ -455,25 +496,25 @@ class UninstallGetInfoHandler(BaseHandler):
             cfgMgr = BaseHandler.configMgr
             infos = cfgMgr.getInstalledPackages().get(name, None)
             if not infos:
-                request.logs.append('无法找到模块：‘%s’ 的安装信息' % name)
+                request.put('无法找到模块：‘%s’ 的安装信息' % name, msgType='nerror')
                 return
             # 打开模块的文件描述
             packInfo = infos['configFile']
             if not os.path.exists(packInfo):
-                request.logs.append('无法找到模块：‘%s’ 的配置信息：‘%s’' % (name, packInfo))
+                request.put('无法找到模块：‘%s’ 的配置信息：‘%s’' % (name, packInfo), msgType='nerror')
                 return
             # 读取描述信息
             packObj = None
             with open(packInfo, 'r') as fp:
                 packObj = json.load(fp)
             if not packObj:
-                request.logs.append('无法读取模块：‘%s’ 的配置信息：‘%s’' % (name, packInfo))
+                request.put('无法读取模块：‘%s’ 的配置信息：‘%s’' % (name, packInfo), msgType='nerror')
                 return
             # 设置一些基本的信息
             request.packInfo = packInfo
             request.packObj = packObj
         except Exception as e:
-            request.logs.append('处理卸载失败：\n%s\n' % traceback.format_exc())
+            request.put('处理卸载失败', msgType='error')
         else:
             if super().getSuccessor():
                 super().getSuccessor().handle(request)
@@ -520,16 +561,16 @@ class UninstallDeleteFilesAndDirs(BaseHandler):
         :return:
         """
         try:
-            request.logs.extend(UninstallDeleteFilesAndDirs._delFromConfig(request.packInfo, request.packageName))
+            request.put(UninstallDeleteFilesAndDirs._delFromConfig(request.packInfo, request.packageName))
             # 然后删除文件
-            request.logs.extend(UninstallDeleteFilesAndDirs._delFilesAndDirs(request.packObj['installDirs'],
+            request.put(UninstallDeleteFilesAndDirs._delFilesAndDirs(request.packObj['installDirs'],
                                                                              request.packObj['installFiles']))
         except Exception as e:
-            request.logs.append('处理卸载失败：\n%s\n' % traceback.format_exc())
+            request.put('处理卸载失败：', msgType='error')
         else:
             request.uninstallStatus = True
             # 成功
-            request.logs.append(
+            request.put(
                 "成功卸载模块：‘{name}’，版本：‘{version}’，作者：‘{author}’，目标平台：‘{platform}’。重新启动服务即可生效。".format(
                     name=request.packObj['name'],
                     version=request.packObj['version'],
@@ -546,7 +587,7 @@ def installPackage(packageFile):
     :param packageFile: 模块文件
     :return:
     """
-    req = InstallRequest(packageFile)
+    req = InstallRequest(packageFile, immDisplayLogs=True)
     p1 = PackageFileHandler()
     p2 = CheckPackageInfoHandler()
     p3 = ProcessInstallHandler()
@@ -561,25 +602,25 @@ def installPackage(packageFile):
         try:
             shutil.rmtree(temp)
         except Exception as e:
-            req.logs.append('删除临时目录失败：\n%s\n' % traceback.format_exc())
+            req.put('删除临时目录失败：\n%s\n' % traceback.format_exc())
         else:
-            req.logs.append('删除临时目录：%s' % temp)
+            req.put('删除临时目录：%s' % temp)
     if req.installStatus:
-        BaseHandler.logger.info("成功安装模块，安装日志：\n%s\n" % '\n'.join(req.logs))
+        BaseHandler.logger.info("成功安装模块")
     else:
-        BaseHandler.logger.error("安装模块失败，安装日志：\n%s\n" % '\n'.join(req.logs))
+        BaseHandler.logger.error("安装模块失败")
 
 def uninstallPackage(packageName):
     p1 = UninstallGetInfoHandler()
     p2 = UninstallDeleteFilesAndDirs()
-    req = UninstallRequest(packageName)
+    req = UninstallRequest(packageName, immDisplayLogs=True)
     p1.setSuccessor(p2)
 
     p1.handle(req)
     if req.uninstallStatus:
-        BaseHandler.logger.info("成功卸载模块，卸载日志：\n%s\n" % '\n'.join(req.logs))
+        BaseHandler.logger.info("成功卸载模块")
     else:
-        BaseHandler.logger.error("卸载模块失败，卸载日志：\n%s\n" % '\n'.join(req.logs))
+        BaseHandler.logger.error("卸载模块失败")
 
 
 

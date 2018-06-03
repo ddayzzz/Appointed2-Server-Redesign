@@ -9,7 +9,7 @@ from packages import logger
 
 class Router(object):
 
-    def __init__(self, method, route, doc, level, system, func):
+    def __init__(self, method, route, doc, level, system, func, acquireAdmin):
         self.method = method
         self.route = route
         self.doc = doc
@@ -17,11 +17,34 @@ class Router(object):
         self.system = system
         self.func = func  # 关联的函数
         self.enable = True  # 这个路由是否启用
+        # 计算可以作为标志的名称
+        self.flagName = self.method + '_' + str(id(self))
+        # 友好名称
+        self.friendlyName = self.method + ' ' + self.route
+        # 调用这个是否需要管理员登录
+        self.acquireAdmin = acquireAdmin
 
     def __repr__(self):
-        return '{method} : {route}'.format(method=self.method, route=self.route)
+        return 'Router< {method} : {route} at {addr}>'.format(method=self.method, route=self.route, addr=id(self))
+
+
+    def __dict__(self):
+        res = {
+            'route': self.route,
+            'method': self.method,
+            'level': self.level,
+            'system': self.system,
+            'flagName': self.flagName,  # 这个是定义为可以作为标志符的名称
+            'friendlyName': self.friendlyName,
+            'enable': self.enable,
+            'doc': self.doc,
+            'acquireAdmin': self.acquireAdmin
+        }
+        return res
 
 class RouterCallBack(object):
+
+    logger = logger.get_logger('Server')
 
     def __init__(self, routerObj, app, isMainRouter):
         self.router = routerObj
@@ -33,6 +56,15 @@ class RouterCallBack(object):
         # 提取可能的路由
         if not self.router.enable:
             raise ValueError(self.router.method + ' ' + self.router.route + " 不可用")
+        # 检查是否需要管理员
+        if self.router.acquireAdmin:
+            # cookie 的信息
+            if not request.__user__ or not request.__user__.admin:
+                # 如果不存在登录的用户、或者还不是管理员账户
+                # 跳转到登录界面
+                redire = 'redirect:/signin?message=%20路由需要管理员权限%20&redirect=' + request.path_qs
+                __logger.info('路由需要管理员的权限，重定向到 %s' % redire)
+                return redire
         # 获取函数的参数表
         required_args = inspect.signature(self.router.func).parameters
         # logger.get_logger().info('需要的参数: %s' % required_args)
@@ -77,14 +109,14 @@ class RouterCallBack(object):
                     raise ValueError('缺少的参数: %s' % arg.name)
                     # raise _exceptions.APIError('缺少的参数: %s' % arg.name)
 
-        __logger.info('使用参数 {paras} 调用路由：{method} {path} 关联的函数'.format(paras=kw, method=self.router.method,
+        RouterCallBack.logger.info('使用参数 {paras} 调用路由：{method} {path} 关联的函数'.format(paras=kw, method=self.router.method,
                                                                        path=self.router.route))
         try:
             # return await self._func(**kw)
-            # 需要通过Pack 管理器的
+            # 记录请求
+            self.app.runtimeInfo.addRequestCount(self.router.flagName)
             return await self.router.func(**kw)
         except Exception as e:
             # 出错记录
-            msg = '运行路由处理器期间发生‘%s’类型的错误，错误消息如下：%s，堆栈信息：\n%s\n' % (str(type(e)), str(e.args), traceback.format_exc())
-            __logger.error(msg)
+            RouterCallBack.logger.error('运行路由处理器期间发生‘%s’类型的错误，错误消息：', exc_info=True, stack_info=True)
             raise e

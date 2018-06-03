@@ -14,11 +14,13 @@ hook_handle = None
 hook_callback = None
 __CLOSE_MESSAGE = 0x0400  # 默认的关闭信号
 __RESTART_MESSAGE = 0x0401  # 默认的重启信号
-__THREAD_ID = ctypes.windll.Kernel32.GetCurrentThreadId()
-__PROCESSID = ctypes.windll.Kernel32.GetCurrentProcessId()
-__CLOSE_CALL = None
-__RESTART_CALL = None
-__CTRLC_CALL = None
+__RESTART_MESSAGE_ENTERMAN = 0x0402  # 默认的重启进入监控程序的信号
+__THREAD_ID = ctypes.windll.Kernel32.GetCurrentThreadId()  # 线程号
+__PROCESSID = ctypes.windll.Kernel32.GetCurrentProcessId()  # 进程号
+__CLOSE_CALL = None  # 接收窗体关闭信号的回调
+__RESTART_CALL = None  # 重启信号
+__CTRLC_CALL = None  # Windows 中 CTRL+C 终止信号
+__RESTART_ENTERMAN_CALL = None
 __WC = None
 
 
@@ -58,17 +60,33 @@ def destroy():
     ctypes.windll.user32.UnhookWindowsHookEx(hook_handle)
     win32gui.UnregisterClass(__WC.lpszClassName, None)  # 解除注册
  
-def init(close_signalnum, restartsignalnum, closecall, restartcall, ctrlccall):
+def init(close_signalnum, restartsignalnum, restartToManSignalnum, closecall, restartcall, ctrlccall, restartToManCall):
+    """
+    初始化调用
+    :param close_signalnum:关闭信号
+    :param restartsignalnum: 重启信号
+    :param restartToManSignalnum: 重启到维护模式的信号
+    :param closecall: 关闭的时候调用
+    :param restartcall: 重启的时候调用
+    :param ctrlccall: 用户在监控程序的取消指令
+    :param restartToManCall: 重启到维护模式的时候应该调用
+    :return:
+    """
     global __CLOSE_MESSAGE
     global __RESTART_MESSAGE
     global __CLOSE_CALL
     global __RESTART_CALL
     global __CTRLC_CALL
+    global __RESTART_ENTERMAN_CALL
+    global  __RESTART_MESSAGE_ENTERMAN
     __CLOSE_CALL = closecall
     __RESTART_CALL = restartcall
     __CLOSE_MESSAGE = close_signalnum
     __RESTART_MESSAGE = restartsignalnum
     __CTRLC_CALL = ctrlccall
+    __RESTART_MESSAGE_ENTERMAN = restartToManSignalnum
+    __RESTART_ENTERMAN_CALL = restartToManCall
+
 
 
 def regHook():
@@ -104,6 +122,9 @@ def regHook():
         """Destroy window when it is closed by user"""
         __RESTART_CALL()
 
+    def OnRestartToMan_Call(hwnd, msg, wparam, lparam):
+        __RESTART_ENTERMAN_CALL()
+
 
     def OnDestroy(hwnd, msg, wparam, lparam):
         """Quit application when window is destroyed"""
@@ -115,7 +136,8 @@ def regHook():
             win32con.WM_DESTROY: OnDestroy,
             win32con.WM_MOUSEMOVE: OnClose,
             __CLOSE_MESSAGE: OnClose_Call,
-            __RESTART_MESSAGE: OnRestart_Call
+            __RESTART_MESSAGE: OnRestart_Call,
+            __RESTART_MESSAGE_ENTERMAN:OnRestartToMan_Call
             }
 
     def CreateWindow(title, message_map, location):

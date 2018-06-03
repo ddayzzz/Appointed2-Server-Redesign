@@ -1,2 +1,2 @@
 # coding=utf-8
-from factories import data_factory, logger_factory, response_factory
+from factories import data_factory, logger_factory, response_factory, auth_factory

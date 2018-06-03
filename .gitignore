@@ -6,10 +6,12 @@ cached/
 
 # 排除第三方的安装包
 *.tar.gz
+
 # 安装的位置
-/packages/**/*
-# 但是不排除所有的文件
-!/packages/*.*
+/packages/*
+# 不要排除主要的模块
+!/packages/Common/
+!/packages/Common/*.*
 # 排除日志
 logs/
 # 排除缓存

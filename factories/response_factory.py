@@ -2,7 +2,7 @@ from aiohttp import web
 import json
 from packages import logger, APIError
 import traceback
-__logger = logger.get_logger()
+__logger = logger.get_logger("Server")
 # 响应的抽象工厂
 async def response_factory(app, handler):
     """
@@ -16,6 +16,7 @@ async def response_factory(app, handler):
             __logger.info('等待响应...')
 
             r = await handler(request)  # 等待logger的处理完成
+
             if isinstance(r, web.StreamResponse):
                 # 字节流。客户端默认下载的是字节流(header是application/octet-stream)。需要修改请求的类型
                 accept_type = request.headers.get('accept')
@@ -39,12 +40,13 @@ async def response_factory(app, handler):
             if isinstance(r, dict):
                 template = r.get('__template__')
                 if template is None:
+                    dictData = {'status': '200', 'data': r}
                     resp = web.Response(
-                        body=json.dumps(r, ensure_ascii=False, default=lambda o: o.__dict__).encode('utf-8'))
+                        body=json.dumps(dictData, ensure_ascii=False, default=lambda o: o.__dict__()).encode('utf-8'))
                     resp.content_type = 'application/json;charset=utf-8'
                     return resp
                 else:
-                    # r['__user__'] = request.__user__
+                    r['__user__'] = request.__user__
                     resp = web.Response(body=app.template.get_template(template).render(**r).encode('utf-8'))  # 从emplate的目录读取文件
                     resp.content_type = 'text/html;charset=utf-8'
                     return resp

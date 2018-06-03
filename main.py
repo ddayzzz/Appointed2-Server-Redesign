@@ -16,14 +16,21 @@ from packages import logger, macros
 class RunInfo():
     __doc__ = '定义服务的设置信息，可以转换为参数信息'
 
-    def __init__(self):
+    def __init__(self, maintanceMode=False):
+        """
+        初始化运行参数
+        :param maintanceMode: 是否是维护模式（仅仅启动必要的模块）
+        """
         self._configMgr = config.getConfigManager()
         self.cmds = dict()
         self.noValsArgs = list() # 这个是针对没有指定参数的
-        self.pythonExec = 'python' if os.name == 'nt' else 'python3'
+        self.noOptsArgs = list() # 不要指定开关的参数
+        self.pythonExec = sys.executable
         self.serverFileName = 'server.py'
         self._setDefaultAddress()
         self._setSignalNum(os.name)
+        self._setLoadPackages(maintanceMode)
+        self._setDatabaseInfo()
         # 根据实际设置参数
         self._checkCmdLine()
         # 设置监控程序 pid
@@ -31,6 +38,12 @@ class RunInfo():
         # 是否与用户交互
         self.interactive = self._configMgr['interactive']
 
+    def _setLoadPackages(self, maintanceMode):
+        packages = self._configMgr.getInstalledPackages()
+        if maintanceMode:
+            self.noOptsArgs = [name for name, infos in packages.items() if infos['main_package']]
+        else:
+            self.noOptsArgs = [name for name, infos in packages.items() if infos['enable']]
 
     def _setSignalNum(self, sysname):
         """
@@ -41,13 +54,16 @@ class RunInfo():
         if sysname == 'nt':
             re_signal = int(self._configMgr['restart_signnum_win'], base=16)
             cl_signal = int(self._configMgr['close_signnum_win'], base=16)
+            re_main_signal = int(self._configMgr['restart_enter_maintenance_win'], base=16)
         else:
             # 关联重启信号
             re_signal = self._configMgr['restart_signnum_unix']
             # 关联关闭服务信号
             cl_signal = self._configMgr['close_signnum_unix']
+            re_main_signal = self._configMgr['restart_enter_maintenance_unix']
         self.cmds['closeSignal'] = cl_signal
         self.cmds['restartSignal'] = re_signal
+        self.cmds['maintenanceSignal'] = re_main_signal  # 重启进入
 
     def _setDefaultAddress(self):
         """
@@ -59,6 +75,28 @@ class RunInfo():
         i = self._configMgr['host']
         self.cmds['port'] = p
         self.cmds['host'] = i
+
+    def _setDatabaseInfo(self):
+        """
+        设置数据连接的参数
+        :return:
+        """
+        db_obj = self._configMgr.get("mainDatabase", None)
+        if not  db_obj:
+            return
+        db_name = "mysql"  # 目前这个版本的数据库
+        db_username = db_obj['username']
+        db_password = db_obj['password']
+        db_addr = db_obj['address']
+        db_port = db_obj['port']
+        db_dbname = db_obj['dbname']
+        # 写入参数
+        self.cmds['dbname'] = db_name
+        self.cmds['dbusername'] = db_username
+        self.cmds['dbpassword'] = db_password
+        self.cmds['dbaddress'] = db_addr
+        self.cmds['dbport'] = db_port
+        self.cmds['dbdbname'] = db_dbname
 
 
 
@@ -110,8 +148,9 @@ class RunInfo():
             cmd.extend(('--%s' % k, str(v)))
         # 无参数
         cmd.extend(self.noValsArgs)
+        # 无开关
+        cmd.extend(self.noOptsArgs)
         return cmd
-
 
 
 def getSignalIDByStr(signalStr):
@@ -127,8 +166,10 @@ if os.name == 'nt':
     import win32gui
     import win32con
     from libs import sendMessage
+
 __process = None
 __runInfo = RunInfo()
+__runInfo_maintance = RunInfo(True)
 
 
 
@@ -143,9 +184,9 @@ def process_kill():
         __process = None
 
 
-def process_start():
+def process_start(runInfo):
     global  __process
-    cmds = __runInfo.generateCommandLine()
+    cmds = runInfo.generateCommandLine()
     __process = subprocess.Popen(cmds, cwd=os.path.realpath('.'), stderr=sys.stderr, stdin=sys.stdin,
                                  stdout=sys.stdout,
                                  shell=False)
@@ -172,7 +213,7 @@ def process_ctrlc():
 
 def onReceive_killSignal(num, st):
     """
-    Linix 下信号
+    Linix 下关闭服务的信号
     :param num:
     :param st:
     :return:
@@ -188,13 +229,21 @@ def onReceive_killSignal(num, st):
 
 
 
-def process_restart():
+def process_restart(enterMaintenance=False):
+    """
+    处理监控程序发送的重启服务
+    :param enterMaintenance:
+    :return:
+    """
     process_kill()
-    process_start()
+    if enterMaintenance:
+        process_start(__runInfo_maintance)
+    else:
+        process_start(__runInfo)
 
 
-def user_run():
-    process_start()
+def user_run(runInfo):
+    process_start(runInfo)
     if os.name != 'nt':
         try:
             while True:
@@ -205,11 +254,12 @@ def user_run():
             pass
         process_kill()
     else:
-        sin_win_restart = __runInfo.cmds['restartSignal']
-        sin_win_close = __runInfo.cmds['closeSignal']
+        sin_win_restart = runInfo.cmds['restartSignal']
+        sin_win_close = runInfo.cmds['closeSignal']
+        sin_win_restart_enterMan = runInfo.cmds['maintenanceSignal']
         hooker.init(close_signalnum=sin_win_close, restartsignalnum=sin_win_restart,
-                    closecall=process_kill, restartcall=process_restart, ctrlccall=process_ctrlc)
-
+                    closecall=process_kill, restartcall=process_restart, ctrlccall=process_ctrlc,
+                    restartToManCall=lambda: process_restart(True), restartToManSignalnum=sin_win_restart_enterMan)
         hwnd, wc = hooker.regHook()
         # Windows 消息循环
         try:
@@ -233,12 +283,13 @@ if __name__ == '__main__':
     # 初始化环境
     initEnv.InitEnv(True)
     # 初始化logger 输出
-    logger.init_logger('Monitor', macros.sep.join((macros.Macro('LOGROOT'), 'main-%s.log' % str(time.time()))), True, standardOutput=True)
+    logger.init_logger(macros.sep.join((macros.Macro('LOGROOT'), 'main-%s.log' % str(time.time()))), True)
     if os.name != 'nt':
         signal.signal(signal.SIGTERM, onReceive_killSignal)  # 这个是默认的，用于关闭整个程序，Linux
         # 关联其他信号
         signal.signal(getSignalIDByStr(__runInfo.cmds['closeSignal']), lambda n,s:process_kill())
         signal.signal(getSignalIDByStr(__runInfo.cmds['restartSignal']), lambda n, s: process_restart())
+        signal.signal(getSignalIDByStr(__runInfo.cmds['maintenanceSignal']), lambda n, s: process_restart(enterMaintenance=True))
     interactive = __runInfo.interactive
     # 进行用户交互
     if not interactive:
@@ -248,12 +299,14 @@ if __name__ == '__main__':
     try:
         while code != 'EXIT':
             if code == 'RUN':
-                user_run()
+                user_run(__runInfo)
+            elif code == 'RUN MAINTANCE':
+                user_run(__runInfo_maintance)
             elif code == 'LIST PACKAGES':
                 print(user_display_installedPackages())
             elif code == 'I':
                 from packages import setupTool
-                setupTool.installPackage('WordBook_nt_amd64_testForPip.tar.gz')
+                setupTool.installPackage('WordBook_nt_amd64.tar.gz')
             elif code == 'U':
                 from packages import setupTool
                 setupTool.uninstallPackage('WordBook')
@@ -264,7 +317,7 @@ if __name__ == '__main__':
             else:
                 pass
             if interactive:
-                code = input('>>>').upper()
+                code = input('\n>>>').upper()
             else:
                 break  # 不需要交互直接退出
     except KeyboardInterrupt:
