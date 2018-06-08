@@ -1,0 +1,204 @@
+{% extends '__base__.html' %} {% block title %}Appointed2 - 维护页面{% endblock %} {% block meta %}
+<script type="text/javascript" src="/static/js/vue.js"></script>
+<script type="text/javascript" src="/templates/Common/bindData.js"></script>
+<script type="text/javascript" src="/static/js/axios.min.js"></script>
+<script type="text/javascript" src="/static/js/lodash.min.js"></script>
+<script type="text/javascript" src="/templates/Common/processInstall.js"></script>
+<script type="text/javascript">
+    window.onload = function () {
+        init_addRequestCount();
+        {%if maintenance %}
+        getRuntimeInfo(false);
+        {% else %}
+        getRuntimeInfo(true);
+        {% endif %}
+    }
+</script> {% endblock %} {% block size %}width="auto" height="500px"{% endblock %} {% block content %}
+<div id="statusMgr">
+    <!--运行的状态统计-->
+    <nav class="uk-navbar uk-navbar-attached uk-margin-bottom">
+        <div class="uk-container uk-container-center">
+            <a href="/" class="uk-navbar-brand">Appointed2</a>
+            <ul class="uk-navbar-nav">
+                <li>
+                    <a href="#" style="cursor:pointer;">
+                        <i class="uk-icon-archive"></i> 模块管理</a>
+                </li>
+                <li>
+                    <a href="#" style="cursor:pointer;">
+                        <i class="uk-icon-users"></i> 用户管理</a>
+                </li>
+                <li>
+                    {%if maintenance %}
+                    <a onclick="getRuntimeInfo(false)" style="cursor:pointer;">
+                        {%else%}
+                        <a onclick="getRuntimeInfo(true)" style="cursor:pointer;">
+                            {%endif%}
+                            <i class="uk-icon-refresh"></i> 刷新状态</a>
+                </li>
+                <li class="uk-parent" data-uk-dropdown>
+                    <a href="">
+                        <i class="uk-icon-archive"> 操作服务端</i>
+                    </a>
+                    <div class="uk-dropdown uk-dropdown-navbar uk-dropdown-bottom">
+                        <ul class="uk-nav uk-nav-navbar">
+                            <li>
+                                <a onclick="toClose()">
+                                    <i class="uk-icon-close"> 关闭服务</i>
+                                </a>
+                            </li>
+                            <li>
+                                <a onclick="toRestart()">
+                                    <i class="uk-icon-rotate-left"> 重启服务</i>
+                                </a>
+                            </li>
+                            <li>
+                                <a onclick="toRestartAndEnterMaintenance()">
+                                    <i class="uk-icon-calendar-plus-o"> 进入维护模式</i>
+                                </a>
+                            </li>
+                        </ul>
+                    </div>
+
+                </li>
+            </ul>
+            <div class="uk-navbar-flip">
+                <ul class="uk-navbar-nav">
+                    {% if __user__ %}
+                    <li class="uk-parent" data-uk-dropdown>
+                        <a href="#0">
+                            <i class="uk-icon-user"></i> {{ __user__.username }} {% if __user__.admin %}(管理员){% endif %}</a>
+                        <div class="uk-dropdown uk-dropdown-navbar">
+                            <ul class="uk-nav uk-nav-navbar">
+                                <li>
+                                    <a href="/api/user/signout" style="cursor:pointer;">
+                                        <i class="uk-icon-sign-out"></i> 注销</a>
+                                </li>
+                            </ul>
+                        </div>
+                    </li>
+                    {% else %}
+                    <li>
+                        <a href="/signin?redirect=/admin" style="cursor:pointer;">
+                            <i class="uk-icon-sign-in"></i> 登录</a>
+                    </li>
+                    <li>
+                        <a href="/register?redirect=/admin" style="cursor:pointer;">
+                            <i class="uk-icon-edit"></i> 注册</a>
+                    </li>
+                    {% endif %}
+                </ul>
+            </div>
+        </div>
+    </nav>
+    <div class="uk-flex uk-flex-center" id="main_sysStatusMgr">
+        <div class="uk-width-1-5 uk-panel uk-panel-box">
+            <h4>CPU 使用率：</h4>
+            <p>
+                <span v-text="status_cpuRate"></span>
+            </p>
+        </div>
+        <div class="uk-width-1-5 uk-panel uk-panel-box">
+            <h4>内存使用：</h4>
+            <p>
+                <span v-text="status_memoryUsage"></span>
+            </p>
+        </div>
+        <div class="uk-width-1-5 uk-panel uk-panel-box">
+            <h4>运行时间：</h4>
+            <p>
+                <span v-text="status_runnningTime"></span>
+            </p>
+        </div>
+        <div class="uk-width-1-5 uk-panel uk-panel-box">
+            <h4>绑定域名：</h4>
+            <p>
+                <span v-text="status_bindHost"></span>
+            </p>
+        </div>
+        <div class="uk-width-1-5 uk-panel uk-panel-box">
+            <h4>绑定端口：</h4>
+            <p>
+                <span v-text="status_bindPort"></span>
+            </p>
+        </div>
+    </div>
+    <!--这个容纳已经安装模块或者是管理模块-->
+    <div class="uk-block" id="main_packagesMgr">
+        <!-- 这是包含拨动元素的容器 -->
+        <ul class="uk-subnav uk-subnav-pill uk-container-center" data-uk-switcher="{connect:'#tabls_packagesMgr'}">
+            <li>
+                <a href="">已安装的模块</a>
+            </li>
+            <li>
+                <a href="">安装新的模块</a>
+            </li>
+        </ul>
+
+        <!-- 这是内容项目的容器 -->
+        <div id="tabls_packagesMgr" class="uk-switcher">
+            <li>
+                <h2>已经安装的模块：</h2>
+                <div class="uk-overflow-container">
+                    <table class="uk-table uk-table-hover uk-table-condensed">
+                        <tr>
+                            <th>模块名称</th>
+                            <th>作者</th>
+                            <th>版本</th>
+                            <th>是否系统模块</th>
+                            <th>定义的路由</th>
+                            <th>管理</th>
+                        </tr>
+                        {% if installedPackages %} {% for name, packInfo in installedPackages.items() %}
+                        <tr>
+                            <td>{{name}}</td>
+                            <td>{{packInfo['author']}}</td>
+                            <td>{{packInfo['version']}}</td>
+                            <td>{{packInfo['main_package']}}</td>
+                            <td id="packageStatus_{{name}}" class="packageStatus">
+                                {% if not maintenance %}
+                                <dl class="uk-description-list-line">
+                                    {% for routername, routerInfo in packInfo['routers'].items() %}
+                                    <dt>
+                                        {{routerInfo['friendlyName']}}
+                                        <div class="uk-block requestCounter_class" style="float:right;margin: 0%;padding: 0%;text-align: center;" id="{{routerInfo.flagName}}">
+                                            <request-counter-comp class="requestCounter" :counter="routerStatus_counter"></request-counter-comp>
+                                            {%if packInfo['main_package']%}
+                                            <button class="uk-button" disabled>禁用</button>
+                                            {%else%}
+                                            <router-btn-comp class="routerEnableController" :renable="routerStatus_enable" v-bind:onclick="'changeRouterEnableStatus(&quot;{{name}}&quot;, ' + enableChangedCallStr"></router-btn-comp>
+                                            {%endif%}
+                                        </div>
+                                    </dt>
+                                    <dd>
+                                        {% if routerInfo['doc'] %} {{routerInfo['doc']}} {% else %} 没有描述 {% endif %}
+                                    </dd>
+                                    {% endfor %}
+                                </dl>
+                                {%else%} 仅退出维护模式可用 {%endif%}
+                            </td>
+                            <td>
+                                <div class="uk-button-group">
+                                    <a class="uk-button" href="">访问作者网站</a>
+                                    {% if packInfo['main_package'] or not maintenance %}
+                                    <button class="uk-button" disabled>卸载</button>
+                                    {%else%}
+                                    <!-- <button class="uk-button">停止运行(维护模式可用)</button> -->
+                                    <button class="uk-button">卸载(维护模式可用)</button>
+                                    {%endif%}
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %} {% endif %}
+                    </table>
+                </div>
+            </li>
+            <li>
+                <h2>安装新的模块：</h2>
+                {{upload_package|safe}}
+                <!-- <button class="uk-button" id="install-exec" onclick="process_install()"><i class="uk-icon-check-circle">  立即安装</i></button> -->
+                
+            </li>
+        </div>
+    </div>
+    {% endblock %}

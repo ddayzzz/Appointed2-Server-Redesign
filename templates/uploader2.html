@@ -1,0 +1,92 @@
+<!--https://developer.mozilla.org/zh-CN/docs/Web/API/XMLHttpRequest-->
+<!--http://www.getuikit.net/docs/upload.html-->
+<!--修改了 components/upload.js-->
+<script type="text/javascript" src="/templates/resources/uploader2.js"></script>
+<script type="text/javascript" src="/static/js/components/upload.js"></script>
+<link type="text/css" rel="stylesheet" href="/static/css/components/upload.css" />
+<link type="text/css" rel="stylesheet" href="/static/css/components/placeholder.css" />
+<link type="text/css" rel="stylesheet" href="/static/css/components/form-file.css" />
+<!--导入uikit的基本的样式-->
+<link type="text/css" rel="stylesheet" href="/static/css/uikit.css" />
+<link type="text/css" rel="stylesheet" href="/static/css/components/progress.css" />
+<script type="text/javascript" src="/static/js/basic.js"></script>
+<script type="text/javascript" src="/static/js/uikit.js"></script>
+<script>
+    $(function () {
+
+        var progressbar = $("#{{flag}}_progressbar"),
+            bar = progressbar.find('.uk-progress-bar'),
+            settings = {
+
+                action: '{{uploadUrl}}', // 上传路径 url
+                allow: '{{accept}}', // 只允许上传制定的格式
+                single: {% if multiple is defined and multiple %}false{% else %} true{% endif %},
+                type: 'json',
+        loadstart: function () {
+            bar.css("width", "0%").text("0%");
+            progressbar.removeClass("uk-hidden");
+        },
+        
+        progress: function (percent) {
+            percent = Math.ceil(percent);
+            bar.css("width", percent + "%").text(percent + "%");
+        },
+        beforeAll: function (files) {
+            // var size = 0.0;
+            // for (var i = 0; i < files.length; ++i) {
+            //     var element = files[i];
+            //     var sz = element.size / 1054000;
+            //     size = size + sz;
+            //     console.log("文件类型：" + element.type); //文件类型
+            //     console.log("文件大小（MB）：" + sz); //文件大小
+            // }
+            $('#{{flag}}_filesize-div').removeClass("uk-hidden");
+            $('#{{flag}}_filesize').text("上传的文件的大小，" + size.toFixed(2) + "MB。");
+        },
+        notallowed: function(file, settings) {
+            alert('只能上传格式为 ' + settings.allow);
+        },
+        allcomplete: function(resp, xhr) {
+            if (xhr.readyState == XMLHttpRequest.DONE) {
+                if (xhr.status != 200) {
+                    error_callback(xhr);
+                }
+                else {
+                    bar.css("width", "100%").text("100%");
+                    success_callback(resp);
+                }
+                setTimeout(function () {
+                        progressbar.addClass("uk-hidden");
+                        $('#{{flag}}_filesize-div').addClass("uk-hidden");
+                    }, 250);
+            }
+        }
+        };
+
+    var select = UIkit.uploadSelect($("#{{flag}}_upload-select"), settings),
+        drop = UIkit.uploadDrop($("#{{flag}}_upload-drop"), settings);
+    });
+</script>
+<!--定义了回调的函数-->
+<script>function success_callback(returndata) {{success_callback|safe}}</script>
+<!--safe：jinja2 避免HTML自动转义-->
+<script>function error_callback(returndata){{error_callback|safe }}</script> {% if title is defined %}
+
+
+<h2 class="uk-text-large">{{title}}</h2>
+{% endif %} {% if description is defined %}
+<h5 class="uk-text-muted">{{description}}</h5>
+{% endif %}
+<div class="uk-alert uk-hidden" id="{{flag}}_filesize-div" data-uk-alert>
+    <p id="{{flag}}_filesize"></p>
+</div>
+<div id="{{flag}}_upload-drop" class="uk-placeholder uk-text-center">
+    <i class="uk-icon-cloud-upload uk-icon-medium uk-text-muted uk-margin-small-right"></i> 将文件拖拽至此 或
+    <a class="uk-form-file">{% if multiple is defined and multiple %}选择多个文件{%else%}选择一个文件{% endif %}
+        <input id="{{flag}}_upload-select" type="file" accept="{{filter}}" {% if multiple is defined and multiple %}multiple{% endif %}>
+    </a>.
+</div>
+
+<div id="{{flag}}_progressbar" class="uk-progress uk-hidden">
+    <div class="uk-progress-bar" style="width: 0%;"></div>
+</div>

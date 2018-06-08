@@ -1,0 +1,48 @@
+<script type="text/javascript" src="/templates/resources/uploader.js"></script>
+
+<script type="text/javascript" src="/static/js/jquery-3.2.1.min.js"></script>
+<script type="text/javascript" src="/static/js/jquery.form.min.js"></script>
+<!--导入uikit的基本的样式-->
+<link type="text/css" rel="stylesheet" href="/static/css/uikit.css" />
+<link type="text/css" rel="stylesheet" href="/static/css/components/progress.css" />
+<script type="text/javascript" src="/static/js/basic.js"></script>
+<script type="text/javascript" src="/static/js/uikit.js"></script>
+<!--定义了回调的函数-->
+<script>function success_callback(returndata){{success_callback|safe}}</script> <!--safe：jinja2 避免HTML自动转义-->
+<script>function error_callback(returndata){{error_callback|safe}}</script>
+
+<div class="uk-grid">
+    <div class="uk-width-1-1" id="selectfiles_div">
+        <form accept-charset="utf-8" enctype="multipart/form-data" class="uk-form">
+            {% if title is defined %}
+            <h2>{{title }}</h2>
+            {% endif %} {% if description is defined %}
+            <h5>{{description }}</h5>
+            {% endif %}
+
+            <div class="uk-alert" id="filesize-div" data-uk-alert hidden>
+                <p id="filesize"></p>
+            </div>
+            <div class="uk-form-row">
+                <!--处理上传的逻辑-->
+                <input type="file" accept="{{accept if accept is defined else ''}}" name="FilesData" style="display: none" onchange="FilesChanged()"
+                    id="hidden_fileChooser" {% if multiple is defined and multiple %}multiple{% endif %}/>
+                <button type="button" class="uk-button" onclick="UploadFileDialog()">
+                    <i class="uk-icon-folder-open"> 选择文件</i>
+                </button>
+
+            </div>
+            <div class="uk-margin" id="sendbtn-div" hidden>
+                <button type="button" class="uk-button uk-button-primary" id="sendbtn" onclick="UploadFileFn('{{uploadUrl if uploadUrl is defined else ''}}')">
+                    <i class="{{uploadIcon}}"> {{uploadText}}</i>
+                </button>
+            </div>
+            <div class="uk-margin">
+                <div class="uk-progress uk-progress-striped uk-active" id="progress-div" hidden>
+                    <div class="uk-progress-bar" id="progress" style="width: 0%;"></div>
+                </div>
+            </div>
+        </form>
+
+    </div>
+</div>
