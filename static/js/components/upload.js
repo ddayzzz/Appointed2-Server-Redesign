@@ -168,7 +168,9 @@
 
             if (settings.before(settings, files)===false) return;
 
-            for (var i = 0, f; f = files[i]; i++) { formData.append(settings.param, f); }
+            // for (var i = 0, f; f = files[i]; i++) { formData.append(settings.param, f); }
+            // 需要区别不同的选择
+            settings.appendingFormFileData(files, formData);
             for (var p in settings.params) { formData.append(p, settings.params[p]); }
 
             // Add any event handlers here...
@@ -241,7 +243,13 @@
         complete        : function(){},
         allcomplete     : function(){},
         readystatechange: function(){},
-        notallowed      : function(file, settings){ alert('Only the following file types are allowed: '+settings.allow); }
+        notallowed      : function(file, settings){ alert('Only the following file types are allowed: '+settings.allow); },
+        // 自定义的文件表单
+        appendingFormFileData : function(files, formData){
+            for (var i = 0, f; f = files[i]; i++) {
+                formData.append(files[i].name, files[i]);
+             }
+        } 
     };
 
     function matchName(pattern, path) {

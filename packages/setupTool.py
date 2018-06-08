@@ -12,6 +12,7 @@ from collections import Iterable
 import config
 import shutil
 import traceback
+import time
 from enum import Enum
 
 
@@ -26,12 +27,11 @@ class PackageStatus(Enum):
 class BaseHandler():
 
     keyDirs = macros.Macro('KEYDIRS').split(';')  # 注意是关键文件夹名称的列表
-    cached_setup_dir = macros.Macro('CACHEDROOT') + macros.sep + 'temp_packages'  # 解压缩的临时文件夹
+    # cached_setup_dir = macros.Macro('CACHEDROOT') +  + 'temp_packages'  # 解压缩的临时文件夹
     configMgr = config.getConfigManager()
-    platform = macros.Macro('PLATFORM')
-    apt2Version = macros.Macro('VERSION')
+
     logger = logger.get_logger()
-    arc = macros.Macro('ARC')
+
 
     def __init__(self):
         self.successor = None
@@ -45,6 +45,13 @@ class BaseHandler():
     def handle(self, request):
         raise NotImplementedError('子类必须实现 handle')
 
+    @staticmethod
+    def generateExtractDir():
+        """
+        生成安全的解压目录
+        :return:
+        """
+        return macros.sep.join((macros.Macro('CACHEDROOT'), 'InstallExtractDir-' + str(time.time())))
 
 class BaseSetupRequest():
     _logFcnMap = {'info': BaseHandler.logger.info,
@@ -83,6 +90,11 @@ class BaseSetupRequest():
         if not isinstance(request, BaseSetupRequest):
             raise ValueError("只支持对 BaseSetupRequest 的子类进行日志扩充")
         self._logs.extend(request._logs)
+
+    @property
+    def logs(self):
+        return self._logs
+
 
 
 
@@ -139,15 +151,16 @@ class PackageFileHandler(BaseHandler):
         # 这个是安装过程的需要
         zf = request.packageFile
         try:
+            ext_path = BaseHandler.generateExtractDir()
             kd = [d.upper() for d in macros.Macro('KEYDIRS').split(';')]
             kf = ('PACKAGE.JSON', )
-            d, f = PackageFileHandler._ExtractPackage(zf, BaseHandler.cached_setup_dir, kf, kd)
+            d, f = PackageFileHandler._ExtractPackage(zf, ext_path, kf, kd)
             request.installDirs = d
             request.installFiles = f
         except Exception as e:
-            request.put('解压缩安装包失败：%s' % zf, msgType='nerror')
+            request.put('解压缩安装包失败：%s' % zf, msgType='error')
         else:
-            request.extractRoot = BaseHandler.cached_setup_dir  # 这个设置的是解压的路径的根目录
+            request.extractRoot = ext_path  # 这个设置的是解压的路径的根目录
             request.put('成功解压安装包：%s' % zf)
             if super().getSuccessor():
                 super().getSuccessor().handle(request)
@@ -172,6 +185,10 @@ class CheckPackageInfoHandler(BaseHandler):
         :param infoJsonObj: 信息文件的dict对象
         :return: 返回 PackageStatus，（Staus, 消息）
         """
+        a_arc = macros.Macro('ARC').upper()
+        a_platform = macros.Macro('PLATFORM').upper()
+        a_apt2Version = macros.Macro('VERSION')
+
         version = infoJsonObj['version']  # 模块的版本
         platform = infoJsonObj['platform'].upper()  # 支持的平台信息
         # dependencies = infoJsonObj['dependencies']  # 这个模块需要的python 模块
@@ -179,19 +196,19 @@ class CheckPackageInfoHandler(BaseHandler):
         ap2version = infoJsonObj['Appointed2Version']  # 需要的版本
         name = infoJsonObj['name']  # 模块名称
         # 是否满足安装平台
-        if platform != 'ALL' and platform != BaseHandler.platform.upper():
+        if platform != 'ALL' and platform != a_platform:
             return (PackageStatus.Invalid, '不支持的平台：“%s”' % platform)
         # 是否满足安装平台的系统版本
-        if arc != 'ALL' and arc != BaseHandler.arc.upper():
+        if arc != 'ALL' and arc != a_arc:
             return (PackageStatus.Invalid, '不支持的处理器体系结构：“%s”' % arc)
         # Appointed2 版本
         apt2cmp_first = ap2version.find(',')
         apt2cmp = ap2version[:apt2cmp_first]
         apt2targetver = ap2version[apt2cmp_first + 1:]
-        pred = tools.compareVersion(BaseHandler.apt2Version, apt2targetver, apt2cmp)  # 检查是否满足条件
+        pred = tools.compareVersion(a_apt2Version, apt2targetver, apt2cmp)  # 检查是否满足条件
         if not pred:
             return (
-            PackageStatus.Invalid, "安装目标 Appointed2 版本：‘%s’ 不满足 %s ‘%s’" % (BaseHandler.apt2Version, apt2cmp, apt2targetver))
+            PackageStatus.Invalid, "安装目标 Appointed2 版本：‘%s’ 不满足 %s ‘%s’" % (a_apt2Version, apt2cmp, apt2targetver))
         # 检查是否有已经存在的版本
         installed = BaseHandler.configMgr
         previousObj = installed.getInstalledPackages().get(name, None)  # 是否具有某个安装的信息，返回他的 infos
@@ -322,6 +339,7 @@ class ProcessInstallHandler(BaseHandler):
         :param request: 请求对象
         :return: 返回 状态(1没有编译，0 所有编译成功，-1 编译有错误)，新增文件列表
         """
+        a_platform = macros.Macro('PLATFORM')
         infoObj = request.infoObject
         cwd = request.extractRoot
         compile_obj = infoObj.get('compile', None)
@@ -332,7 +350,7 @@ class ProcessInstallHandler(BaseHandler):
         # 查询编译的条件
         for compile_name, compile_info in compile_obj.items():
             platform = compile_info.get('platform', '')
-            if platform.upper() == 'ALL' or platform.upper() == BaseHandler.platform.upper():
+            if platform.upper() == 'ALL' or platform.upper() == a_platform.upper():
                 # 需要编译
                 status, outfile, output, err = tools.compileDynamicExtension(compilerType=compile_info['compiler'],
                                                                     srcs=compile_info['srcs'],
@@ -466,6 +484,23 @@ class ProcessInstallHandler(BaseHandler):
                 super().getSuccessor().handle(request)
 
 
+class CleanExtractDirHandler(BaseHandler):
+
+    def __init__(self):
+        super(CleanExtractDirHandler, self).__init__()
+
+    def handle(self, request):
+        temp = getattr(request, 'extractRoot', None)
+        if temp and os.path.exists(temp):
+            # 清除临时文件
+            try:
+                shutil.rmtree(temp)
+            except Exception as e:
+                request.put('删除临时目录失败：%s' % temp, msgType='nerror')
+            else:
+                request.put('删除临时目录：%s' % temp)
+        if super().getSuccessor():
+            super().getSuccessor().handle(request)
 
 
 
@@ -581,46 +616,38 @@ class UninstallDeleteFilesAndDirs(BaseHandler):
                 super().getSuccessor().handle(request)
 
 
-def installPackage(packageFile):
+def installPackage(request):
     """
     安装模块
-    :param packageFile: 模块文件
+    :param request: 一个构造的请求
     :return:
     """
-    req = InstallRequest(packageFile, immDisplayLogs=True)
     p1 = PackageFileHandler()
     p2 = CheckPackageInfoHandler()
     p3 = ProcessInstallHandler()
-
+    p4 = CleanExtractDirHandler()
     p1.setSuccessor(p2)
     p2.setSuccessor(p3)
-    p1.handle(req)
 
-    temp = getattr(req, 'extractRoot', None)
-    if temp and os.path.exists(temp):
-        # 清除临时文件
-        try:
-            shutil.rmtree(temp)
-        except Exception as e:
-            req.put('删除临时目录失败：\n%s\n' % traceback.format_exc())
-        else:
-            req.put('删除临时目录：%s' % temp)
-    if req.installStatus:
-        BaseHandler.logger.info("成功安装模块")
+    p1.handle(request)
+
+
+    if request.installStatus:
+        request.put("成功安装模块")
     else:
-        BaseHandler.logger.error("安装模块失败")
+        request.put("安装模块失败", msgType='nerror')
+    p4.handle(request)
 
-def uninstallPackage(packageName):
+def uninstallPackage(request):
     p1 = UninstallGetInfoHandler()
     p2 = UninstallDeleteFilesAndDirs()
-    req = UninstallRequest(packageName, immDisplayLogs=True)
     p1.setSuccessor(p2)
 
-    p1.handle(req)
-    if req.uninstallStatus:
-        BaseHandler.logger.info("成功卸载模块")
+    p1.handle(request)
+    if request.uninstallStatus:
+        request.put("成功卸载模块")
     else:
-        BaseHandler.logger.error("卸载模块失败")
+        request.put("卸载模块失败")
 
 
 

@@ -70,8 +70,14 @@ class Package(object):
                             # 读取命令行参数
                             if not asyncio.iscoroutinefunction(fn) and not inspect.isgeneratorfunction(fn): # 检查是否是异步函数
                                 fn = asyncio.coroutine(fn)
+                            # 确定router级别
+                            rt_level = 'user'
+                            if path.startswith('/api'):
+                                rt_level = 'api'
+                            elif path.startswith('/ws'):
+                                rt_level = 'websocket'
                             rt = Router.Router(method=method, route=path, doc=inspect.getdoc(fn),
-                                                              level='api' if path.startswith('/api') else 'user',
+                                                              level=rt_level,
                                                               system=self.main_package, func=fn,
                                                acquireAdmin=adminAcquire)  # 定义成Router 类
                             self.routers[rt.flagName] = rt

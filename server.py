@@ -8,7 +8,7 @@ import sys
 import signal
 import traceback
 import asyncio
-from factories import data_factory, logger_factory, response_factory, requestCheck_factory, auth_factory
+from factories import data_factory, logger_factory, response_factory, auth_factory
 import Appointed2WebApp
 from packages import Package, logger, macros, dbManager
 import subprocess
@@ -52,7 +52,7 @@ class Appointed2Server(BaseServer):
         self.restartSignal = kwargs['restartSignal'] # 通知监控程序的重启信号
         self.restartEnterManSignal = kwargs['maintenanceSignal']  # 重启进入维护模式的信号
         self.app = Appointed2WebApp.Appointed2WebApp(loop=self.loop, middlewares=[
-            logger_factory.logger_factory, requestCheck_factory.requestCheck_factory, data_factory.data_factory,
+            logger_factory.logger_factory,  data_factory.data_factory,
             auth_factory.auth_factory, response_factory.response_factory
         ], topServer=self)
         # 初始化其他的部件

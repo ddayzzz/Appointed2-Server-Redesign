@@ -1,7 +1,6 @@
 # coding=utf-8
 __doc__ = '路由信息'
 import inspect
-import traceback
 from urllib import parse
 from aiohttp import web
 from packages import logger
@@ -60,6 +59,13 @@ class RouterCallBack(object):
         if self.router.acquireAdmin:
             # cookie 的信息
             if not request.__user__ or not request.__user__.admin:
+                if request.method == 'POST':
+                    if request.__user__:
+                        __logger.info('用户：{user} 尝试 POST {path} 访问失败：需要管理员凭据'.format(user=request.__user__,
+                                                                                     path=request.path))
+                    else:
+                        __logger.info('未知用户尝试 POST {path} 访问失败：需要管理员凭据'.format(path=request.path))
+                    return (401, '访问未授权，需要管理员凭据')
                 # 如果不存在登录的用户、或者还不是管理员账户
                 # 跳转到登录界面
                 redire = 'redirect:/signin?message=%20路由需要管理员权限%20&redirect=' + request.path_qs
@@ -96,7 +102,11 @@ class RouterCallBack(object):
         # 如果有app参数，也添加app参数
         if self.isMain and 'app' in required_args:
             kw['app'] = self.app  # 主要用于main的路由设置
-
+        # 如果需要 websocket 通信
+        if self.router.level == 'websocket' and 'wsResponse' in required_args:
+            ws = web.WebSocketResponse()
+            await ws.prepare(request)
+            kw['wsResponse'] = ws  # 使用异步 for 就可以得出消息
         # 检查参数表中有没参数缺失
         for key, arg in required_args.items():
             # request参数不能为可变长参数

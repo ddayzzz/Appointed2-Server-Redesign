@@ -309,7 +309,7 @@ if __name__ == '__main__':
                 setupTool.installPackage('WordBook_nt_amd64.tar.gz')
             elif code == 'U':
                 from packages import setupTool
-                setupTool.uninstallPackage('WordBook')
+                setupTool.uninstallPackage(setupTool.UninstallRequest('Test', True))
             elif code == 'M':
                 from packages import tools
                 s, o,e = tools.installDependentModules(['aiohttp', 'reques'])
