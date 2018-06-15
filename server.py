@@ -9,6 +9,7 @@ import signal
 import traceback
 import asyncio
 from factories import data_factory, logger_factory, response_factory, auth_factory
+import config
 import Appointed2WebApp
 from packages import Package, logger, macros, dbManager
 import subprocess
@@ -47,7 +48,7 @@ class Appointed2Server(BaseServer):
         self.host = kwargs['host']  # 默认绑定的 IP 地址
         self.port = kwargs['port']  # 默认的端口号
         self.loop = kwargs['loop']   # 获取主默认的消息循环
-        # self.configMgr = kwargs['configMgr']  # 绑定的设置管理器
+        self.configMgr = kwargs['configMgr']  # 绑定的设置管理器
         self.closeSignal = kwargs['closeSignal']  # 通知监控程序的关闭信号
         self.restartSignal = kwargs['restartSignal'] # 通知监控程序的重启信号
         self.restartEnterManSignal = kwargs['maintenanceSignal']  # 重启进入维护模式的信号
@@ -169,11 +170,14 @@ def run():
     try:
         global __logger_core
         initEnv.InitEnv(True)
-        # 加载配置设置器
+
         kws = dict()  # 运行参数
         loop = asyncio.get_event_loop()
         kws['loop'] = loop
         kws['logout'] = True
+        # 加载配置设置器
+        cfgr = config.getConfigManager()
+        kws['configMgr'] = cfgr
         options, noOptArgs = getopt.getopt(sys.argv[1:], 'm:h:p:r:c:e:n',
                                            ('monitorpid=', 'host=', 'port=',
                                             'restartSignal=', 'closeSignal=',
@@ -210,6 +214,11 @@ def run():
             else:  # 不允许有不同的参数。可能以后会有可选的配置
                 print('%s\n\n未知的参数 ‘%s’' % (__usage, name), file=sys.stderr)
                 exit(-1)
+        # 是否限定了启动的限定的运行的模块
+        if len(noOptArgs) == 0:
+            # 读取所有的模块
+            packages = cfgr.getInstalledPackages()
+            noOptArgs = [name for name, infos in packages.items() if infos['enable']]
         macros.SetMacro('HOST', kws['host'])
         macros.SetMacro('PORT', kws['port'])
         macros.SetMacro('ADDRESS', 'http://%s:%d' % (kws['host'], kws['port']))

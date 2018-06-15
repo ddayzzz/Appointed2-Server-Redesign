@@ -42,8 +42,7 @@ class RunInfo():
         packages = self._configMgr.getInstalledPackages()
         if maintanceMode:
             self.noOptsArgs = [name for name, infos in packages.items() if infos['main_package']]
-        else:
-            self.noOptsArgs = [name for name, infos in packages.items() if infos['enable']]
+
 
     def _setSignalNum(self, sysname):
         """
@@ -306,10 +305,10 @@ if __name__ == '__main__':
                 print(user_display_installedPackages())
             elif code == 'I':
                 from packages import setupTool
-                setupTool.installPackage('WordBook_nt_amd64.tar.gz')
+                setupTool.installPackage(setupTool.InstallRequest('测试安装2.tar.gz', immDisplayLogs=True))
             elif code == 'U':
                 from packages import setupTool
-                setupTool.uninstallPackage(setupTool.UninstallRequest('Test', True))
+                setupTool.uninstallPackage(setupTool.UninstallRequest('WordBook', True))
             elif code == 'M':
                 from packages import tools
                 s, o,e = tools.installDependentModules(['aiohttp', 'reques'])

@@ -51,7 +51,6 @@ function process_install(returndata)
         //ws.close();
         var msg = evt.data;
         
-        var installcount = 0;
         if(msg.startsWith('BI'))
         {
             // 开头

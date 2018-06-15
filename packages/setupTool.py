@@ -22,6 +22,99 @@ class PackageStatus(Enum):
     OlderVersion=3
     NotExists=4
     Invalid=5
+    Valid = 6
+
+# 用于保存可以继续安装的集中包的情况
+ACCEPT_CONTINUE_INSTALLATION = (PackageStatus.NewerVersion, PackageStatus.NotExists)
+
+
+class PackageInfo():
+    """
+    这个是安装包的描述信息
+    """
+
+    def __init__(self, packageFile):
+        self.status = PackageStatus.Invalid
+        self._gzipObj = None
+        self.installedDirs = None
+        self.installedFiles = None
+        # 这个在一开始就检查安装包的各个信息
+        gzipObj = None
+        try:
+            # 读取基本信息，
+            gzipObj = tarfile.open(packageFile, mode='r:gz')
+            # Bufferlike 对象
+            buf = gzipObj.extractfile('package.json')
+            infoObj = json.load(buf)
+            # 读取信息
+            if infoObj:
+                self.name = infoObj['name']
+                self.version = infoObj['version']
+                self.platform = infoObj['platform']
+                self.arc = infoObj['arc']
+                self.author = infoObj['author']
+                self.dependencies = infoObj['dependencies']
+                self.apt2Version = infoObj['Appointed2Version']
+                self.compile = infoObj['compile']
+                self._gzipObj = gzipObj
+                self.packageFile = packageFile
+                self.status = PackageStatus.Valid
+
+        except Exception as e:
+            if gzipObj:
+                gzipObj.close()
+            self._gzipObj = None
+            raise e
+
+    def extract(self, extract_path, keyFiles, keyDirs):
+        """
+        解压缩 gzip 格式
+        :param packageFile: 压缩版包文件
+        :param extract_path: 解压的路径.由于使用了extract 所以会移除所有的 . 和 ..。以及类似于 //root 会变成 root，放在了extract_path 目录
+        :param keyFiles: 可迭代对象，关键目录（大写）
+        :param keyDirs : 可迭代对象，关键文件（大写）， 例如 ['PACKAGE.JSON']
+        :return: 修改对象的值：解压的目录列表（忽略掉所有的关键文件夹），文件列表（忽略掉所有的关键文件）
+        """
+        files = []
+        dirs = []
+        if self.status == PackageStatus.Valid:
+            names = self._gzipObj.getmembers()  # 获取所有的名称（文件夹和文件，TarInfo 对象）
+            for name in names:
+                # 检查每一个名称
+                if name.isdir():
+                    self._gzipObj.extract(member=name, path=extract_path)
+                    if name.name.upper() not in keyDirs:
+                        dirs.append(name.name)
+                else:
+                    self._gzipObj.extract(member=name, path=extract_path)
+                    if name.name.upper() not in keyFiles:
+                        files.append(name.name)
+        self.installedDirs = dirs
+        self.installedFiles = files
+
+    def __dict__(self, appendOtherInfo=False):
+        res = {
+            'name': self.name,
+            'version': self.version,
+            'platform': self.platform,
+            'arc': self.arc,
+            'author': self.author,
+            'dependencies': self.dependencies,
+            'Appointed2Version': self.apt2Version,
+            'compile': self.compile
+        }
+        if appendOtherInfo:
+            res.update({'installedFiles': self.installedFiles, 'installedDirs': self.installedDirs})
+        return res
+
+    def close(self):
+        if self._gzipObj:
+            self._gzipObj.close()
+            self._gzipObj = None
+
+
+
+
 
 
 class BaseHandler():
@@ -109,59 +202,44 @@ class InstallRequest(BaseSetupRequest):
 
 
 
-class PackageFileHandler(BaseHandler):
+class ExtractPackageHandler(BaseHandler):
     """
-    这个处理解压缩安装包的功能
+    这个是读取某个压缩包的内容
     """
     def __init__(self):
-        super(PackageFileHandler, self).__init__()
+        super(ExtractPackageHandler, self).__init__()
 
-    @staticmethod
-    def _ExtractPackage(packageFile, extract_path, keyFiles, keyDirs):
-        """
-        解压缩 zip 格式
-        :param packageFile: 压缩版包文件
-        :param extract_path: 解压的路径.由于使用了extract 所以会移除所有的 . 和 ..。以及类似于 //root 会变成 root，放在了extract_path 目录
-        :param keyFiles: 可迭代对象，关键目录（大写）
-        :param keyDirs : 可迭代对象，关键文件（大写）， 例如 ['PACKAGE.JSON']
-        :return: 返回解压的目录列表（忽略掉所有的关键文件夹），文件列表（忽略掉所有的关键文件）
-        """
-        files = []
-        dirs = []
-        with tarfile.open(packageFile, mode='r:gz') as obj:  # 使用了 tar.gz
-            names = obj.getmembers()  # 获取所有的名称（文件夹和文件，TarInfo 对象）
-            for name in names:
-                # 检查每一个名称
-                if name.isdir():
-                    obj.extract(member=name, path=extract_path)
-                    if name.name.upper() not in keyDirs:
-                        dirs.append(name.name)
-                else:
-                    obj.extract(member=name, path=extract_path)
-                    if name.name.upper() not in keyFiles:
-                        files.append(name.name)
-        return dirs, files
 
     def handle(self, request):
         """
         解压缩安装包信息
-        :param request: 请求，需要使用属性 packageFile
+        :param request: 请求，需要使用属性 packageInfoObj, packageStatus
         :return:
         """
         # 这个是安装过程的需要
-        zf = request.packageFile
+        zf = request.packageInfoObj
         try:
+            if not request.packageInfoObj:
+                request.put('没有指定的安装包信息', msgType='error')
+                return
+            if not request.packageStatus in ACCEPT_CONTINUE_INSTALLATION:
+                # 不能继续安装的情况：信息不完整
+                request.put('不能继续解压安装包过程：未满足安装条件')
+                return
             ext_path = BaseHandler.generateExtractDir()
             kd = [d.upper() for d in macros.Macro('KEYDIRS').split(';')]
             kf = ('PACKAGE.JSON', )
-            d, f = PackageFileHandler._ExtractPackage(zf, ext_path, kf, kd)
-            request.installDirs = d
-            request.installFiles = f
+            # 直接解压
+            zf.extract(ext_path, kf, kd)
         except Exception as e:
-            request.put('解压缩安装包失败：%s' % zf, msgType='error')
+            request.put('解压缩安装包失败：%s' % zf.packageFile, msgType='error')
+            if request.packageInfoObj:
+                request.packageInfoObj.close()  # 关闭已经打开的安装包
         else:
+            if request.packageInfoObj:
+                request.packageInfoObj.close()  # 关闭已经打开的安装包
             request.extractRoot = ext_path  # 这个设置的是解压的路径的根目录
-            request.put('成功解压安装包：%s' % zf)
+            request.put('成功解压安装包：%s' % zf.packageFile)
             if super().getSuccessor():
                 super().getSuccessor().handle(request)
 
@@ -171,30 +249,24 @@ class CheckPackageInfoHandler(BaseHandler):
     def __init__(self):
         super(CheckPackageInfoHandler, self).__init__()
 
-    @staticmethod
-    def _GetPackageInfo(infoJson):
-        with open(infoJson, 'r') as fp:
-            infoJsonObj = json.load(fp)  # 读取基本的信息
-        return infoJsonObj
-
 
     @staticmethod
-    def _CheckInstalledInfo(infoJsonObj):
+    def _CheckInstalledInfo(packageInfoObj):
         """
         检查是否满足安装的标准
-        :param infoJsonObj: 信息文件的dict对象
+        :param packageInfoObj: 安装的信息
         :return: 返回 PackageStatus，（Staus, 消息）
         """
         a_arc = macros.Macro('ARC').upper()
         a_platform = macros.Macro('PLATFORM').upper()
         a_apt2Version = macros.Macro('VERSION')
 
-        version = infoJsonObj['version']  # 模块的版本
-        platform = infoJsonObj['platform'].upper()  # 支持的平台信息
+        version = packageInfoObj.version  # 模块的版本
+        platform = packageInfoObj.platform.upper()  # 支持的平台信息
         # dependencies = infoJsonObj['dependencies']  # 这个模块需要的python 模块
-        arc = infoJsonObj['arc'].upper()  # 获取体系结构信息
-        ap2version = infoJsonObj['Appointed2Version']  # 需要的版本
-        name = infoJsonObj['name']  # 模块名称
+        arc = packageInfoObj.arc.upper()  # 获取体系结构信息
+        ap2version = packageInfoObj.apt2Version  # 需要的版本
+        name = packageInfoObj.name  # 模块名称
         # 是否满足安装平台
         if platform != 'ALL' and platform != a_platform:
             return (PackageStatus.Invalid, '不支持的平台：“%s”' % platform)
@@ -228,31 +300,48 @@ class CheckPackageInfoHandler(BaseHandler):
     def handle(self, request):
         """
         处理检查的任务
-        :param request: 需要拥有属性 extractRoot 这个表示解压的目录
+        :param request: 这个是安装的起始步骤
         :return:
         """
+        packageInfoObj = None
+        request.packageStatus = PackageStatus.Invalid
         try:
-            packjson = macros.sep.join((request.extractRoot, 'package.json'))
-            if not os.path.exists(packjson):
-                request.put('检查信息失败：没有找到配置文件‘%s’' % packjson, msgType='nerror')
-                request.packageStatus = PackageStatus.Invalid
+            packageInfoObj = PackageInfo(request.packageFile)
+            if packageInfoObj.status != PackageStatus.Valid: #
+                request.put('安装包无效：‘%s’' % packageInfoObj.packageFile, msgType='nerror')
+                packageInfoObj.close()
                 return
-            packjsonObj = CheckPackageInfoHandler._GetPackageInfo(packjson)
-            # 检查其他的信息
-            initFile = macros.sep.join(
-                (request.extractRoot, macros.Macro('PACKAGEROOT'), packjsonObj['name'], '__init__.py'))
-            if not os.path.exists(initFile):
-                request.put('检查信息失败：没有找到模块的初始化文件‘%s’' % initFile, msgType='nerror')
-                request.packageStatus = PackageStatus.Invalid
-                return
-            status, msg = CheckPackageInfoHandler._CheckInstalledInfo(packjsonObj)
-        except Exception as e:
-            request.put('检查信息失败', msgType='nerror')
-        else:
+            status, msg = CheckPackageInfoHandler._CheckInstalledInfo(packageInfoObj)
+            # 输出检查的信息
             request.put(msg)
+            # 设置相关信息
             request.packageStatus = status
-            request.infoFile = packjson
-            request.infoObject = packjsonObj
+            request.packageInfoObj = packageInfoObj
+            # 检查相关的信息
+            if status == PackageStatus.CurrentVersion:
+                request.put('安装失败：试图安装相同版本的模块‘%s’，版本：%s' % (packageInfoObj.name, packageInfoObj.version), msgType='nerror')
+                packageInfoObj.close()
+                return
+            if status == PackageStatus.OlderVersion:
+                request.put('安装失败：试图安装旧版本的模块‘%s’。冲突的版本：%s' % (packageInfoObj.name, packageInfoObj.version), msgType='nerror')
+                packageInfoObj.close()
+                return
+            if status == PackageStatus.NewerVersion:
+                request.put('安装程序将会安装新版的模块‘%s’，新版本：‘%s’' % (packageInfoObj.name, packageInfoObj.version), msgType='nerror')
+                # 需要卸载
+                request.put('正在卸载旧版本的模块')
+                p1 = UninstallGetInfoHandler()
+                p2 = UninstallDeleteFilesAndDirs()
+                req = UninstallRequest(packageInfoObj.name, immDisplayLogs=False)
+                p1.setSuccessor(p2)
+                p1.handle(req)  # 处理卸载请求
+                request.extend(req)
+                request.put('卸载旧版本的模块成功')
+        except Exception as e:
+            request.put('检查信息失败', msgType='error')
+            if packageInfoObj:
+                packageInfoObj.close()
+        else:
             if super().getSuccessor():
                 super().getSuccessor().handle(request)
 
@@ -264,25 +353,20 @@ class ProcessInstallHandler(BaseHandler):
 
 
     @staticmethod
-    def _processInfoFile(files, dirs, infoFile, infoObject):
+    def _processInfoFile(infoFile, packageInfoObj):
         """
         这个函数用来辅助处理模块的信息
-        :param files: 待安装的文件
-        :param dirs: 待安装的文件夹
         :param infoFile: 信息文件
-        :param infoObject: 信息文件的dict对象
+        :param packageInfoObj: 信息文件的对象
         :return:
         """
-        packname = infoObject['name']
-        packversion = infoObject['version']
+        packname = packageInfoObj.name
+        packversion = packageInfoObj.version
         targetFile = macros.sep.join((macros.Macro('CONFIGROOT'), '%s-%s.json' % (packname, packversion)))
-        ni = dict(infoObject)
-        ni['installFiles'] = files
-        ni['installDirs'] = dirs
-
         # json 写入到config目录的文件下
         with open(targetFile, 'w') as fp:
-            json.dump(ni, fp, indent=4)
+            i = packageInfoObj.__dict__(appendOtherInfo=True)
+            json.dump(i, fp, indent=4)
         # 删除原始的信息
         os.remove(infoFile)
         return ['成功更新模块配置文件：%s' % targetFile]
@@ -340,9 +424,9 @@ class ProcessInstallHandler(BaseHandler):
         :return: 返回 状态(1没有编译，0 所有编译成功，-1 编译有错误)，新增文件列表
         """
         a_platform = macros.Macro('PLATFORM')
-        infoObj = request.infoObject
+        infoObj = request.packageInfoObj
         cwd = request.extractRoot
-        compile_obj = infoObj.get('compile', None)
+        compile_obj = infoObj.compile
         status = 1
         files = []
         if not compile_obj:
@@ -378,9 +462,9 @@ class ProcessInstallHandler(BaseHandler):
         :param request: 请求对象
         :return: 返回 状态(1没有安装，0 所有安装成功，-1 安装有错误)，安装的模块列表
         """
-        infoObj = request.infoObject
+        infoObj = request.packageInfoObj
         cwd = request.extractRoot
-        dep_obj = infoObj.get('dependencies', None)
+        dep_obj = infoObj.dependencies
         status = 1
         mods = []
         if not dep_obj:
@@ -402,17 +486,19 @@ class ProcessInstallHandler(BaseHandler):
         return status, mods
 
     @staticmethod
-    def _updateConfig(infoObj):
+    def _updateConfig(packageInfoObj):
         """
         更新已经安装的模块的信息
-        :param infoObj: 信息对象
+        :param packageInfoObj: 信息对象
         :return:
         """
         cfgmgr = BaseHandler.configMgr
-        infoObj['enable'] = True
-        infoObj['main_package'] = False
-        infoObj['configFile'] = macros.sep.join((macros.Macro('CONFIGROOT'), '%s-%s.json' % (infoObj['name'], infoObj['version'])))
-        cfgmgr.addInstalledPackageInfo(infoObj['name'], infoObj)
+        configObj = packageInfoObj.__dict__(appendOtherInfo=False)
+        configObj['enable'] = True
+        configObj['main_package'] = False
+        configObj['configFile'] = macros.sep.join((macros.Macro('CONFIGROOT'), '%s-%s.json' % (packageInfoObj.name,
+                                                                                               packageInfoObj.version)))
+        cfgmgr.addInstalledPackageInfo(packageInfoObj.name, configObj)
         cfgmgr.save()
         return ['成功更新配置文件']
 
@@ -423,29 +509,10 @@ class ProcessInstallHandler(BaseHandler):
         :return:
         """
         try:
-            if request.packageStatus == PackageStatus.Invalid:
-                request.put('安装失败：非法的安装包', msgType='nerror')
+            if not request.packageStatus in ACCEPT_CONTINUE_INSTALLATION:
+                # 不能继续安装的情况：信息不完整
+                request.put('不能继续解压安装包过程：未满足安装条件')
                 return
-            if request.packageStatus == PackageStatus.CurrentVersion:
-                request.put('安装失败：试图安装相同版本的模块‘%s’，版本：%s' % (request.infoObject['name'],
-                                                                           request.infoObject['version']), msgType='nerror')
-                return
-            if request.packageStatus == PackageStatus.OlderVersion:
-                request.put('安装失败：试图安装旧版本的模块‘%s’。冲突的版本：%s' % (request.infoObject['name'],
-                                                                             request.infoObject['version']), msgType='nerror')
-                return
-            if request.packageStatus == PackageStatus.NewerVersion:
-                request.put('安装程序将会安装新版的模块‘%s’，新版本：‘%s’' % (request.infoObject['name'],
-                                                                           request.infoObject['version']), msgType='nerror')
-                # 需要卸载
-                request.put('正在卸载旧版本的模块')
-                p1 = UninstallGetInfoHandler()
-                p2 = UninstallDeleteFilesAndDirs()
-                req = UninstallRequest(request.infoObject['name'], immDisplayLogs=False)
-                p1.setSuccessor(p2)
-                p1.handle(req)  # 处理卸载请求
-                request.extend(req)
-                request.put('卸载旧版本的模块成功')
             # 安装相关的模块
             ms, mmnames = ProcessInstallHandler._installDependcies(request)
             if ms == -1:
@@ -463,21 +530,24 @@ class ProcessInstallHandler(BaseHandler):
                 # 写入文件对象
                 request.installFiles.extend(cfiles)
             # 不存在其他的内容
-            request.put(ProcessInstallHandler._processInfoFile(request.installFiles, request.installDirs,
-                                                                              request.infoFile, request.infoObject))
+            originalInfo = macros.sep.join((request.extractRoot, 'package.json'))
+            # 处理写入的模块信息
+            request.put(ProcessInstallHandler._processInfoFile(originalInfo, request.packageInfoObj))
+            # 复制已经解压缩的文件
             request.put(ProcessInstallHandler._copyFilesAndDirs(request.extractRoot, '.'))
-            request.put(ProcessInstallHandler._updateConfig(request.infoObject))
+            # 更新程序配置
+            request.put(ProcessInstallHandler._updateConfig(request.packageInfoObj))
 
         except Exception as e:
             request.put('处理安装失败：\n%s\n' % traceback.format_exc())
         else:
             request.installStatus = True  # 完成安装
             request.put(
-                "成功安装模块：‘{name}’，版本：‘{version}’，作者：‘{author}’，目标平台：‘{platform}’。重新启动服务即可生效。".format(
-                    name=request.infoObject['name'],
-                    version=request.infoObject['version'],
-                    author=request.infoObject['author'],
-                    platform=request.infoObject['platform']
+                "成功安装模块：‘{name}’，版本：‘{version}’，作者：‘{author}’，目标平台：‘{platform}’。".format(
+                    name=request.packageInfoObj.name,
+                    version=request.packageInfoObj.version,
+                    author=request.packageInfoObj.author,
+                    platform=request.packageInfoObj.platform
                 ))
 
             if super().getSuccessor():
@@ -501,7 +571,6 @@ class CleanExtractDirHandler(BaseHandler):
                 request.put('删除临时目录：%s' % temp)
         if super().getSuccessor():
             super().getSuccessor().handle(request)
-
 
 
 # 卸载部分
@@ -598,8 +667,8 @@ class UninstallDeleteFilesAndDirs(BaseHandler):
         try:
             request.put(UninstallDeleteFilesAndDirs._delFromConfig(request.packInfo, request.packageName))
             # 然后删除文件
-            request.put(UninstallDeleteFilesAndDirs._delFilesAndDirs(request.packObj['installDirs'],
-                                                                             request.packObj['installFiles']))
+            request.put(UninstallDeleteFilesAndDirs._delFilesAndDirs(request.packObj['installedDirs'],
+                                                                             request.packObj['installedFiles']))
         except Exception as e:
             request.put('处理卸载失败：', msgType='error')
         else:
@@ -622,8 +691,8 @@ def installPackage(request):
     :param request: 一个构造的请求
     :return:
     """
-    p1 = PackageFileHandler()
-    p2 = CheckPackageInfoHandler()
+    p1 = CheckPackageInfoHandler()
+    p2 = ExtractPackageHandler()
     p3 = ProcessInstallHandler()
     p4 = CleanExtractDirHandler()
     p1.setSuccessor(p2)

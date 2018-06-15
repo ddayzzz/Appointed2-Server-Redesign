@@ -8,7 +8,7 @@ import config
 from packages import logger, uploader
 from packages import setupTool
 import time
-import aiohttp
+from queue import Queue
 import json
 
 _logger = logger.get_logger('Maintenance')
@@ -20,13 +20,15 @@ class RemoteInstallRequest(setupTool.InstallRequest):
     远程用户的请求安装处理
     """
 
-    def __init__(self, packageFile):
+    def __init__(self, packageFile, requestId):
         super(RemoteInstallRequest, self).__init__(packageFile, True)  # 制定了安装文件，并且立即显示日志到文件
+        self.requestId = requestId
 
     def __dict__(self):
-        if not getattr(self, 'infoObject', None):
-            return {}
-        return self.infoObject
+        if not getattr(self, 'packageStatus', None) or not getattr(self, 'packageInfoObj', None):
+            return {'name': '未知', 'version': '未知', 'author': '未知'}
+        else:
+            return self.packageInfoObj.__dict__()
 
 
 
@@ -85,32 +87,45 @@ async def package_processInstall(filenames, loop, ws):
     :param filenames: 文件名
     :param loop:异步事件循环
     :param ws:websocket 对象
-    :return: 返回字典：请求id->请求对象
+    :return: 返回一个已经构造的响应类型 是 WebResponse 的子类
     """
-    p1 = setupTool.PackageFileHandler()
-    p2 = setupTool.CheckPackageInfoHandler()
-    # 阶段2
+    # 阶段1：获取信息（获取所有的包的信息）
+    p1 = setupTool.CheckPackageInfoHandler()
+    p2 = setupTool.ExtractPackageHandler()
+    # 阶段2：读取有关的数据
     p3 = setupTool.ProcessInstallHandler()
     p4 = setupTool.CleanExtractDirHandler()
     p1.setSuccessor(p2)
-
+    # 发送安装包的数量
     await ws.send_str('IT:%d' % len(filenames))
+    # 获取所有的信息
+    installQueue = Queue()
     for filepath in filenames:
         keyname = 'InstallRequest-' + str(time.time()).replace('.', '-')
+        request = RemoteInstallRequest(packageFile=filepath, requestId=keyname)
+        p1.handle(request)
+        # 加入执行安装的队列
+        installQueue.put(request)
+        # 输出相关的信息
         await ws.send_str('BI:%s' % keyname)
-        # 继续添加
-        rr = RemoteInstallRequest(packageFile=filepath)
-        # 为了读取基本的信息
-        p1.handle(rr)
-        # 输出基本的信息
-        await ws.send_str(json.dumps(rr, default=lambda o: o.__dict__()))
+        await ws.send_str(json.dumps(request, default=lambda o: o.__dict__()))
+    while not installQueue.empty():  # 只要还有任务
+        request = installQueue.get()
+        if not request.packageStatus in setupTool.ACCEPT_CONTINUE_INSTALLATION:
+            # 完全不合法的安装包信息
+            # 输出错误信息
+            for msg in request.logs:
+                await ws.send_str(msg)
+            # 结果是错误的
+            await ws.send_str('EI:%s,Result:%s' % (request.requestId, 'Failed'))
+            continue
         # 继续安装
-        p3.handle(rr)
-        p4.handle(rr)
+        p3.handle(request)
+        p4.handle(request)
         # 最后输出日志
-        for msg in rr.logs:
+        for msg in request.logs:
             await ws.send_str(msg)
-        await ws.send_str('EI:%s,Result:%s' % (keyname, 'Done' if rr.installStatus else 'Failed'))
+        await ws.send_str('EI:%s,Result:%s' % (request.requestId, 'Done' if request.installStatus else 'Failed'))
     # await ws.send_str(json.dumps(res, default=lambda o: o.__dict__()))
     await ws.close()
     return ws
